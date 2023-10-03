@@ -375,11 +375,11 @@ class ContactController extends Controller
             $date += (24 - $taskTimeHrs + 9) * 60;
         }
         $dayOfWeek = date('w', $date);
-        if($dayOfWeek == 5){
-            $date += 60 * 60 * 24 * 2;
+        if($dayOfWeek == 6){
+            $date += 60 * 60 * 24 * 2;//saturday
         }
-        elseif ($dayOfWeek == 6){
-            $date += 60 * 60 * 24;
+        elseif ($dayOfWeek == 0){
+            $date += 60 * 60 * 24;//sunday
         }
 
         //add Task
