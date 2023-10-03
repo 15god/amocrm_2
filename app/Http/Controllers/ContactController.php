@@ -9,6 +9,7 @@ use AmoCRM\Collections\CustomFields\CustomFieldEnumsCollection;
 use AmoCRM\Collections\CustomFieldsValuesCollection;
 use AmoCRM\Collections\Leads\LeadsCollection;
 use AmoCRM\Collections\LinksCollection;
+use AmoCRM\Collections\NotesCollection;
 use AmoCRM\Collections\TasksCollection;
 use AmoCRM\Exceptions\AmoCRMApiException;
 use AmoCRM\Exceptions\AmoCRMApiNoContentException;
@@ -29,6 +30,8 @@ use AmoCRM\Models\CustomFieldsValues\ValueModels\MultitextCustomFieldValueModel;
 use AmoCRM\Models\CustomFieldsValues\ValueModels\NumericCustomFieldValueModel;
 use AmoCRM\Models\CustomFieldsValues\ValueModels\SelectCustomFieldValueModel;
 use AmoCRM\Models\LeadModel;
+use AmoCRM\Models\NoteType\CommonNote;
+use AmoCRM\Models\NoteType\ServiceMessageNote;
 use AmoCRM\Models\TaskModel;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -193,44 +196,71 @@ class ContactController extends Controller
         if(isset($contact_id)){
             //check of it has a lead
             $leadLink = $apiClient->contacts()->getLinks($apiClient->contacts()->get()->getBy('id', $contact_id));
+
             if(!$leadLink->isEmpty()){
                 $lead = $apiClient->leads()->get()->getBy('id',$leadLink->toArray()[0]['to_entity_id']);
                 $contactModel = $apiClient->contacts()->get()->getBy('id',$contact_id);
                 $contactLinks = $apiClient->contacts()->getLinks($contactModel)->toArray();
 
-                foreach($contactLinks as $link){
-                    if ($link['to_entity_type'] == "customers"){
-                        $hasCustomer = true;
-                        break;
-                    }
-                }
                 //check lead status
-                if($lead->getStatusId() == 142 && !($hasCustomer ?? false)){
+                if($lead->getStatusId() == 142){
 
-                    $customersService = $apiClient->customers();
-                    $contactModelArr = $contactModel->toArray();
-                    $customer = new CustomerModel();
-                    $customer->setName($contactModelArr['name']);
+                    foreach($contactLinks as $link){
+                        if ($link['to_entity_type'] == "customers"){
+                            $hasCustomer = true;
+                            break;
+                        }
+                    }
 
-                    try {
-                        $customer = $customersService->addOne($customer);
-                    } catch (AmoCRMApiException $e) {
-                        printError($e);
-                        die;
+                    if (!($hasCustomer ?? false)){
+
+                        $customersService = $apiClient->customers();
+                        $contactModelArr = $contactModel->toArray();
+                        $customer = new CustomerModel();
+                        $customer->setName($contactModelArr['name']);
+
+                        try {
+                            $customer = $customersService->addOne($customer);
+                        } catch (AmoCRMApiException $e) {
+                            printError($e);
+                            die;
+                        }
+                        //Link to contact
+                        $links = new LinksCollection();
+                        $links->add($contactModel);
+                        try {
+                            $customersService->link($customer, $links);
+                        } catch (AmoCRMApiException $e) {
+                            printError($e);
+                            die;
+                        }
+                        return response('Customer created',200);
                     }
-                    //Link to contact
-                    $links = new LinksCollection();
-                    $links->add($contactModel);
-                    try {
-                        $customersService->link($customer, $links);
-                    } catch (AmoCRMApiException $e) {
-                        printError($e);
-                        die;
+
+                    else{
+                        return response('Customer already Exists',200);
                     }
-                    return response('Customer created',200);
+
                 }
                 else{
-                    return response('Lead is in progress or a customer is already exists',200);
+                    //add common note to a lead
+
+                    $notesCollection = new NotesCollection();
+                    $commonNote = new CommonNote();
+                    $commonNote->setEntityId($lead->getId())
+                        ->setText('Контакт уже существует');
+
+                    $notesCollection->add($commonNote);
+
+                    try {
+                        $leadNotesService = $apiClient->notes(EntityTypesInterface::LEADS);
+                        $notesCollection = $leadNotesService->add($notesCollection);
+                    } catch (AmoCRMApiException $e) {
+                        printError($e);
+                        die;
+                    }
+
+                    return response('Lead still in progress',200);
                 }
             }
             else{
@@ -333,13 +363,20 @@ class ContactController extends Controller
             die;
         }
 
-        //set time viable time for task
+        //set time viable time for task исправить
         $date = time() + 24 * 60 * 60 * 4;
         $taskTimeHrs = date('H', $date);
         if ($taskTimeHrs <= 9) {
             $date += (9 - $taskTimeHrs) * 60;
         } elseif ($taskTimeHrs >= 18) {
             $date += (24 - $taskTimeHrs + 9) * 60;
+        }
+        $dayOfWeek = date('w', $date);
+        if($dayOfWeek == 5){
+            $date += 60 * 60 * 24;
+        }
+        elseif ($dayOfWeek == 6){
+            $date += 60 * 60 * 24 * 2;
         }
 
         //add Task
