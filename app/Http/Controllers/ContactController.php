@@ -1,5 +1,5 @@
 <?php
-
+//declare(strict_types=1); в боевых задачах
 namespace App\Http\Controllers;
 
 use AmoCRM\Client\AmoCRMApiClient;
@@ -31,11 +31,11 @@ use AmoCRM\Models\CustomFieldsValues\ValueModels\NumericCustomFieldValueModel;
 use AmoCRM\Models\CustomFieldsValues\ValueModels\SelectCustomFieldValueModel;
 use AmoCRM\Models\LeadModel;
 use AmoCRM\Models\NoteType\CommonNote;
-use AmoCRM\Models\NoteType\ServiceMessageNote;
 use AmoCRM\Models\TaskModel;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 use League\OAuth2\Client\Token\AccessTokenInterface;
+use function Laravel\Prompts\error;
 
 include_once base_path('vendor/amocrm/amocrm-api-library/examples/token_actions.php');
 include_once base_path('vendor/amocrm/amocrm-api-library/examples/error_printer.php');
@@ -78,8 +78,9 @@ class ContactController extends Controller
 
         //set up missing custom fields
         $customFieldsService = $apiClient->customFields(EntityTypesInterface::CONTACTS);
+        $customFieldsSCollection = $customFieldsService->get();
 
-        if (empty($customFieldsService->get()->getBy('code', 'AGE'))) {
+        if (empty($customFieldsSCollection->getBy('code', 'AGE'))) {
 
             $cf = new NumericCustomFieldModel();
             $cf->setName('Возраст');
@@ -88,7 +89,7 @@ class ContactController extends Controller
             $customFieldsService->addOne($cf);
         };
 
-        if (empty($customFieldsService->get()->getBy('code', 'GENDER'))) {
+        if (empty($customFieldsSCollection->getBy('code', 'GENDER'))) {
 
             $cf = new SelectCustomFieldModel();
             $cf->setName('Пол');
@@ -113,10 +114,12 @@ class ContactController extends Controller
             $customFieldsService->addOne($cf);
         };
 
-        $catalog = $apiClient->catalogs()->get()->getBy('name', 'Товары');
+        $catalog = $apiClient->catalogs()->get()->getBy('name', 'Товары');//можно достать по типу
+
+        $catalogElementsService = $apiClient->catalogElements($catalog->getId());
 
         try{
-            $catalogElementsCollection = $apiClient->catalogElements($catalog->getId())->get();
+            $catalogElementsCollection = $catalogElementsService->get();
         } catch (AmoCRMApiNoContentException $e) {
             $catalogElementsCollection = new CatalogElementsCollection();
         }
@@ -139,7 +142,6 @@ class ContactController extends Controller
             );
             $catalogElementsCollection->add($catalogElement1);
 
-            $catalogElementsService = $apiClient->catalogElements($catalog->getId());
             try {
                 $catalogElementsService->add($catalogElementsCollection);
             } catch (AmoCRMApiException $e) {
@@ -166,7 +168,6 @@ class ContactController extends Controller
             );
             $catalogElementsCollection->add($catalogElement2);
 
-            $catalogElementsService = $apiClient->catalogElements($catalog->getId());
             try {
                 $catalogElementsService->add($catalogElementsCollection);
             } catch (AmoCRMApiException $e) {
@@ -180,32 +181,37 @@ class ContactController extends Controller
         //find duplicates
 
         try{
-            $allContacts = $apiClient->contacts()->get()->toArray();
+            $contactsService = $apiClient->contacts();
+            $allContacts = $contactsService->get();
         } catch (AmoCRMApiNoContentException $e) {
             $allContacts = new ContactsCollection();
-            $allContacts = $allContacts->toArray();
         }
-
-        foreach ($allContacts as $contact){
-            if ( $contact['custom_fields_values'][0]['values'][0]['value'] == $request->phone){
-                $contact_id = $contact['id'];
+        //$contact['custom_fields_values'][0]['values'][0]['value']
+        foreach ($allContacts->toArray() as $contact){
+            $contactPhoneCf = array_filter($contact['custom_fields_values'], function ($cf) {
+                if ($cf['field_code'] === "PHONE") {
+                    return $cf;
+                }
+            });
+            if ($contactPhoneCf[0]['values'][0]['value'] === $request->phone){
+                $contactId = $contact['id'];
                 break;
             }
         }
 
-        if(isset($contact_id)){
+        if(isset($contactId)){
             //check of it has a lead
-            $leadLink = $apiClient->contacts()->getLinks($apiClient->contacts()->get()->getBy('id', $contact_id));
+            $leadLink = $contactsService->getLinks($allContacts->getBy('id', $contactId));
 
             if(!$leadLink->isEmpty()){
-                $lead = $apiClient->leads()->get()->getBy('id',$leadLink->toArray()[0]['to_entity_id']);
-                $contactModel = $apiClient->contacts()->get()->getBy('id',$contact_id);
-                $contactLinks = $apiClient->contacts()->getLinks($contactModel)->toArray();
+                $lead = $apiClient->leads()->get()->getBy('id', $leadLink->toArray()[0]['to_entity_id']);
+                $contactModel = $allContacts->getBy('id',$contactId);
+                $contactLinks = $contactsService->getLinks($contactModel);
 
                 //check lead status
                 if($lead->getStatusId() == 142){
 
-                    foreach($contactLinks as $link){
+                    foreach($contactLinks->toArray() as $link){
                         if ($link['to_entity_type'] == "customers"){
                             $hasCustomer = true;
                             break;
@@ -253,8 +259,7 @@ class ContactController extends Controller
                     $notesCollection->add($commonNote);
 
                     try {
-                        $leadNotesService = $apiClient->notes(EntityTypesInterface::LEADS);
-                        $notesCollection = $leadNotesService->add($notesCollection);
+                        $notesCollection = $apiClient->notes(EntityTypesInterface::LEADS)->add($notesCollection);
                     } catch (AmoCRMApiException $e) {
                         printError($e);
                         die;
@@ -265,7 +270,7 @@ class ContactController extends Controller
             }
             else{
                 //skip making contact and make a lead
-                $contactModel = $apiClient->contacts()->get()->getBy('id',$contact_id);
+                $contactModel = $allContacts->getBy('id',$contactId);
             }
         }
 
@@ -337,8 +342,6 @@ class ContactController extends Controller
 
         //add lead
 
-        $leadsService = $apiClient->leads();
-
         $usersCollection = $apiClient->users()->get();
         $responsibleUser = $usersCollection[rand(0, $usersCollection->count() - 1)]->getId();
 
@@ -357,7 +360,7 @@ class ContactController extends Controller
 
         //save lead
         try {
-            $leadsCollection = $leadsService->add($leadsCollection);
+            $leadsCollection = $apiClient->leads()->add($leadsCollection);
         } catch (AmoCRMApiException $e) {
             printError($e);
             die;
@@ -373,10 +376,10 @@ class ContactController extends Controller
         }
         $dayOfWeek = date('w', $date);
         if($dayOfWeek == 5){
-            $date += 60 * 60 * 24;
+            $date += 60 * 60 * 24 * 2;
         }
         elseif ($dayOfWeek == 6){
-            $date += 60 * 60 * 24 * 2;
+            $date += 60 * 60 * 24;
         }
 
         //add Task
@@ -390,9 +393,8 @@ class ContactController extends Controller
             ->setResponsibleUserId($responsibleUser);
         $tasksCollection->add($task);
 
-        $tasksService = $apiClient->tasks();
         try {
-            $tasksCollection = $tasksService->add($tasksCollection);
+            $tasksCollection = $apiClient->tasks()->add($tasksCollection);
         } catch (AmoCRMApiException $e) {
             printError($e);
             die;
