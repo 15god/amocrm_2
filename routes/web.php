@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ContactController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -13,6 +14,8 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::get('/', function () {
-    return view('welcome');
-});
+Route::get('/contacts/create', [ContactController::class, 'create']);
+
+Route::post('/contacts', [ContactController::class, 'store']);
+
+Route::get('/get_token.php', [ContactController::class, 'tokenInit']);
